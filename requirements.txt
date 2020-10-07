@@ -1,0 +1,7 @@
+torch==1.6
+torch-points3d
+scikit-learn
+tqdm
+plyfile
+pyyaml
+scipy
