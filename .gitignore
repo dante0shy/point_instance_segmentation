@@ -195,3 +195,8 @@ dmypy.json
 # Pyre type checker
 .pyre/
 *.pth
+./point_instance_segmentation/extras/*.pth
+./point_instance_segmentation/ssen
+./point_instance_segmentation/dataset/dataloader_mink_ssen.py
+./point_instance_segmentation/train_ssen.py
+

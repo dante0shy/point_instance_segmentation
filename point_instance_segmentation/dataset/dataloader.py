@@ -2,7 +2,9 @@ import json
 import os
 import numpy as np
 import torch
-from torch_geometric.data import Data
+from torch_geometric.data import Data,Batch
+from MinkowskiEngine.utils import sparse_quantize,sparse_collate
+
 '''
 (26097, 3)
 [{'obj_id': '',
@@ -31,7 +33,7 @@ train = json.load(
     open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'extras', 'train_npy.json'))
 )
 val = json.load(
-    open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'extras', 'train_npy.json'))
+    open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'extras', 'val_npy.json'))
 )
 batch_size = 4
 
@@ -45,36 +47,61 @@ batch_size = 4
 #     vote_label: torch.Tensor
 
 class DataLoader():
-    feature_dimension = 1
-    num_classes = 3
-    stuff_classes = 5
-
     def __init__(self,data = train):
-        self.data_list = train
+        self.feature_dimension = 1
+        self.num_classes = 3
+        self.stuff_classes = torch.Tensor([0])
+        self.data_list = data
         self.data= [self.read(x) for x in self.data_list]
+        self.grid_size =  0.05
 
     def read(self,data):
         label = json.load(open(data[2]))
         with open(data[1], 'rb') as f:
-            pcd = torch.Tensor(np.load(data[1]))  # ,allow_pickle=False
+            pcd = torch.Tensor(np.load(data[1])) # ,allow_pickle=False
         # print(pcd.shape)
-        r = torch.ones(pcd.shape[0]).view(-1,1)
-        label_map = torch.zeros(pcd.shape[0])
-        instance_labels = torch.zeros(pcd.shape[0])
+        pcd = pcd
 
+        r = torch.ones(pcd.shape[0]).view(-1,1)
+        label_map = torch.zeros(pcd.shape[0]) #-1
+        instance_labels = torch.zeros(pcd.shape[0])
+        vote_label = torch.zeros_like(pcd)
+        center_label = []
         for i,l in enumerate(label):
             l_num = label_set.index(l['obj_type'])
-            index = self.transform_index(l['psr'],pcd)
-            label_map[index] +=l_num
-            instance_labels += (i+1)
+            index, center = self.transform_index(l['psr'],pcd)
+            label_map[index] =l_num
+            instance_labels[index] = i+1#[index]
+            center_label.append(l_num)
+            vote_label[index] = (pcd[index]  - center)#/0.05
+        coords = (pcd-pcd.min(0)[0])/ 0.05
+        coords = coords.int()
+        # coords, r, sem_label = sparse_quantize(coords, feats=r.reshape(-1,1), labels=sem_label.astype(np.int32), ignore_label=0, quantization_size=scale)#ME.utils.
+        ind = sparse_quantize(coords, feats=r.reshape(-1, 1), labels=label_map.int(), ignore_label=0,
+                              return_index=True)
         sp_data = {}
-
-        sp_data["pos"] = pcd
+        instance_labels = instance_labels[ind[0]].long()
+        vote_label = vote_label[ind[0]]/ 0.05#[instance_labels]
+      # ME.utils.quantization_size=scale,
+        # ins_label = torch.Tensor(label_map.astype(np.int))[ind[0]]
+        # center_label: torch.Tensor
+        # y: torch.Tensor
+        # num_instances: torch.Tensor
+        # instance_labels: torch.Tensor
+        # instance_mask: torch.Tensor
+        # vote_label: torch.Tensor
+        sp_data["pos"] = pcd[ind[0]]
+        sp_data["coords"] = coords[ind[0]]#[ind[0]]
         sp_data["rgb"] = r
-        sp_data["y"] = label_map
-        sp_data["x"] = pcd
+        sp_data["y"] = ind[1].type(torch.LongTensor)#label_map#
+        sp_data["x"] = r[ind[0]]
         sp_data["instance_labels"] = instance_labels
+        sp_data["center_label"] = torch.Tensor(center_label)
+        sp_data["num_instances"] = torch.Tensor(len(label))
+        sp_data["instance_mask"] = instance_labels > 0#[ind[0]].type(torch.LongTensor)
+        sp_data["vote_label"] = vote_label#[ind[0]]
         # sp_data["instance_bboxes"] = torch.from_numpy(instance_bboxes)
+        # sp_data =Data(**sp_data)
         sp_data =Data(**sp_data)
 
         return sp_data
@@ -89,12 +116,14 @@ class DataLoader():
 
         return (tmp[:, 0] <= np.abs(psr['scale']['x'])) * (tmp[:, 1] <= np.abs(psr['scale']['y'])) \
                * (tmp[:, 0] >= -np.abs(psr['scale']['x'])) * (tmp[:, 1] >= -np.abs(psr['scale']['y'])) \
-               * (coords[:, 2] <= z1 + np.abs(psr['scale']['z'])) * (coords[:, 2] >= z1 - np.abs(psr['scale']['z']))
+               * (coords[:, 2] <= z1 + np.abs(psr['scale']['z'])) * (coords[:, 2] >= z1 - np.abs(psr['scale']['z'])), torch.Tensor([[x1,y1,z1]])
+    def get_batch(self,x):
+        return Batch.from_data_list([self.data[y] for y in x])
 
 
     def get_loader(self):
         return torch.utils.data.DataLoader(
-                self.data, batch_size=batch_size, num_workers=5, shuffle=True)
+                range(len(self.data)), batch_size=batch_size,collate_fn= self.get_batch  , num_workers=5, shuffle=False)
     # def get_loader(self):
     #     return torch.utils.data.DataLoader(
     #             self.data, batch_size=batch_size, num_workers=5, shuffle=True)
@@ -104,5 +133,3 @@ if __name__=='__main__':
 
     for d in t_loader.get_loader():
         print(d[0][0].shape[0])
-        print(d[0][1].shape[0])
-        print(d[0][2].shape[0])
