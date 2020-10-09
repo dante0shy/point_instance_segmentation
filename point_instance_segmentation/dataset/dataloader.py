@@ -35,7 +35,7 @@ train = json.load(
 val = json.load(
     open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'extras', 'val_npy.json'))
 )
-batch_size = 4
+# batch_size = 4
 
 
 # class PanopticLabels(NamedTuple):
@@ -47,13 +47,14 @@ batch_size = 4
 #     vote_label: torch.Tensor
 
 class DataLoader():
-    def __init__(self,data = train):
+    def __init__(self,data = train,batch_size = 4):
         self.feature_dimension = 1
         self.num_classes = 3
         self.stuff_classes = torch.Tensor([0])
         self.data_list = data
         self.data= [self.read(x) for x in self.data_list]
         self.grid_size =  0.05
+        self.batch_size = batch_size
 
     def read(self,data):
         label = json.load(open(data[2]))
@@ -123,7 +124,7 @@ class DataLoader():
 
     def get_loader(self):
         return torch.utils.data.DataLoader(
-                range(len(self.data)), batch_size=batch_size,collate_fn= self.get_batch  , num_workers=5, shuffle=False)
+                range(len(self.data)), batch_size= self.batch_size,collate_fn= self.get_batch  , num_workers=5, shuffle=False)
     # def get_loader(self):
     #     return torch.utils.data.DataLoader(
     #             self.data, batch_size=batch_size, num_workers=5, shuffle=True)
